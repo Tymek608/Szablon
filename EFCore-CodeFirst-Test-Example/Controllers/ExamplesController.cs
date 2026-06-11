@@ -39,29 +39,47 @@ public class ExamplesController(IDbService dbService) : ControllerBase
         }
     }
 
-    // POST /api/examples
-    [HttpPost]
-    public async Task<IActionResult> AddExample([FromBody] ExampleRequest request, CancellationToken cancellationToken)
+    // GET /api/examples/advanced?name=abc&minYear=2020&maxValue=100&sortBy=name&descending=true&pageNumber=1&pageSize=10
+    [HttpGet("advanced")]
+    public async Task<IActionResult> GetAdvancedExamples(
+        [FromQuery] string? name,
+        [FromQuery] int? minYear,
+        [FromQuery] decimal? maxValue,
+        [FromQuery] string? sortBy,
+        [FromQuery] bool descending = false,
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken cancellationToken = default)
+    {
+        if (pageNumber < 1 || pageSize < 1)
+        {
+            return BadRequest("PageNumber and PageSize must be greater than or equal to 1.");
+        }
+
+        var result = await dbService.GetAdvancedExamplesAsync(
+            name, minYear, maxValue, sortBy, descending, pageNumber, pageSize, cancellationToken);
+        return Ok(result);
+    }
+
+    // GET /api/examples/parents/{parentId:int}/stats
+    [HttpGet("parents/{parentId:int}/stats")]
+    public async Task<IActionResult> GetParentStats(
+        [FromRoute] int parentId,
+        CancellationToken cancellationToken)
     {
         try
         {
-            await dbService.AddExampleAsync(request, cancellationToken);
-            return Created();
+            var result = await dbService.GetParentStatsAsync(parentId, cancellationToken);
+            return Ok(result);
         }
         catch (NotFoundException e)
         {
             return NotFound(e.Message);
         }
-        catch (ConflictException e)
-        {
-            return Conflict(e.Message);
-        }
-        catch (BadRequestException e)
-        {
-            return BadRequest(e.Message);
-        }
     }
 }
+
+
 
 
 

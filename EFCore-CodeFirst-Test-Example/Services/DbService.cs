@@ -55,63 +55,103 @@ public class DbService(DatabaseContext ctx) : IDbService
             ?? throw new NotFoundException($"Example with ID {id} was not found.");
     }
 
-
     // --------------------------------------------------------------------------------
-    // WZORZEC POST (Walidacja biznesowa + Transakcja)
+    // WZORZEC GET ADVANCED (Filtrowanie dynamiczne, Sortowanie dynamiczne, Stronicowanie)
     // --------------------------------------------------------------------------------
-    public async Task AddExampleAsync(ExampleRequest request, CancellationToken cancellationToken)
+    public async Task<ICollection<ExampleResponse>> GetAdvancedExamplesAsync(
+        string? name,
+        int? minYear,
+        decimal? maxValue,
+        string? sortBy,
+        bool descending,
+        int pageNumber,
+        int pageSize,
+        CancellationToken cancellationToken)
     {
-        // 1. Rozpoczynamy transakcję bazodanową
-        using var transaction = await ctx.Database.BeginTransactionAsync(cancellationToken);
-        try
+        var query = ctx.Examples.AsQueryable();
+
+        // 1. Filtrowanie dynamiczne
+        if (!string.IsNullOrWhiteSpace(name))
         {
-            // 2. Przykład walidacji: Sprawdzenie unikalności nazwy
-            var alreadyExists = await ctx.Examples
-                .AnyAsync(e => e.Name.Trim().ToLower() == request.Name.Trim().ToLower(), cancellationToken);
-            if (alreadyExists)
-            {
-                throw new ConflictException($"Example with name '{request.Name}' already exists.");
-            }
-
-            // 3. Przykład walidacji: Sprawdzenie istnienia powiązanego rekordu (np. rodzica)
-            /*
-            var parentExists = await ctx.Parents.AnyAsync(p => p.Id == request.ParentId, cancellationToken);
-            if (!parentExists)
-            {
-                throw new NotFoundException($"Parent with ID {request.ParentId} was not found.");
-            }
-            */
-
-            // 4. Tworzenie i dodanie głównego obiektu
-            var newEntity = new ExampleEntity
-            {
-                Name = request.Name,
-                Value = request.Age
-            };
-            await ctx.Examples.AddAsync(newEntity, cancellationToken);
-            await ctx.SaveChangesAsync(cancellationToken); // Save generuje wygenerowane przez bazę ID dla newEntity
-
-            // 5. Przykład dodawania powiązanych rekordów (np. w tabeli łączącej)
-            /*
-            var junction = new JunctionEntity
-            {
-                FirstId = newEntity.Id,
-                SecondId = request.SecondId
-            };
-            await ctx.Junctions.AddAsync(junction, cancellationToken);
-            await ctx.SaveChangesAsync(cancellationToken);
-            */
-
-            // 6. Zatwierdzamy transakcję
-            await transaction.CommitAsync(cancellationToken);
+            query = query.Where(e => e.Name.Contains(name));
         }
-        catch
+
+        if (minYear.HasValue)
         {
-            // 7. W razie błędu wycofujemy wszystkie operacje
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
+            query = query.Where(e => e.Year >= minYear.Value);
         }
+
+        if (maxValue.HasValue)
+        {
+            query = query.Where(e => e.Value <= maxValue.Value);
+        }
+
+        // 2. Sortowanie dynamiczne
+        query = sortBy?.ToLower() switch
+        {
+            "name" => descending ? query.OrderByDescending(e => e.Name) : query.OrderBy(e => e.Name),
+            "year" => descending ? query.OrderByDescending(e => e.Year) : query.OrderBy(e => e.Year),
+            "value" => descending ? query.OrderByDescending(e => e.Value) : query.OrderBy(e => e.Value),
+            _ => descending ? query.OrderByDescending(e => e.Id) : query.OrderBy(e => e.Id)
+        };
+
+        // 3. Stronicowanie (Paging)
+        query = query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize);
+
+        // 4. Projekcja do DTO
+        return await query
+            .Select(e => new ExampleResponse(
+                e.Id,
+                e.Name,
+                e.OptionalCount,
+                e.CreatedAt,
+                DateOnly.FromDateTime(e.CreatedAt),
+                ExampleStatus.Active,
+                new NestedObjectResponse(e.RelatedParentId, e.EntityParent.Name),
+                new List<NestedObjectResponse>()
+            ))
+            .ToListAsync(cancellationToken);
+    }
+
+    // --------------------------------------------------------------------------------
+    // WZORZEC GET AGGREGATION / STATS (Agregacja, grupowanie i sprawdzanie istnienia rodzica)
+    // --------------------------------------------------------------------------------
+    public async Task<ParentStatsResponse> GetParentStatsAsync(int parentId, CancellationToken cancellationToken)
+    {
+        // Sprawdzamy czy rodzic istnieje
+        var parentName = await ctx.RelatedParents
+            .Where(rp => rp.RelatedParentId == parentId)
+            .Select(rp => rp.Name)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (parentName == null)
+        {
+            throw new NotFoundException($"Parent with ID {parentId} was not found.");
+        }
+
+        // Liczymy agregaty dla przykładów przypisanych do tego rodzica
+        var stats = await ctx.Examples
+            .Where(e => e.RelatedParentId == parentId)
+            .GroupBy(e => e.RelatedParentId)
+            .Select(g => new
+            {
+                Count = g.Count(),
+                AverageValue = g.Average(e => e.Value),
+                MaxValue = g.Max(e => e.Value),
+                MinValue = g.Min(e => e.Value)
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // Jeśli rodzic istnieje, ale nie ma dzieci, zwracamy puste/zerowe wartości
+        return new ParentStatsResponse(
+            parentId,
+            parentName,
+            stats?.Count ?? 0,
+            stats?.AverageValue ?? 0,
+            stats?.MaxValue ?? 0,
+            stats?.MinValue ?? 0
+        );
     }
 }
-
-

@@ -30,3 +30,12 @@ public enum ExampleStatus
     Cancelled = 2
 }
 
+public record ParentStatsResponse(
+    int ParentId,
+    string ParentName,
+    int TotalExamples,
+    decimal AverageValue,
+    decimal MaxValue,
+    decimal MinValue
+);
+

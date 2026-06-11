@@ -12,9 +12,17 @@ public interface IDbService
     // Pobiera jeden główny obiekt oraz dołącza powiązane dane z limitem ilościowym
     Task<ExampleResponse> GetExampleByIdAsync(int id, int? limitCount, CancellationToken cancellationToken);
 
-    // WZORZEC 3: POST z transakcją i walidacją biznesową
-    Task AddExampleAsync(ExampleRequest request, CancellationToken cancellationToken);
+    // WZORZEC 3: GET z zaawansowanym filtrowaniem, sortowaniem i paginacją
+    Task<ICollection<ExampleResponse>> GetAdvancedExamplesAsync(
+        string? name,
+        int? minYear,
+        decimal? maxValue,
+        string? sortBy,
+        bool descending,
+        int pageNumber,
+        int pageSize,
+        CancellationToken cancellationToken);
+
+    // WZORZEC 4: GET z agregacją / statystykami powiązanych danych dla rodzica
+    Task<ParentStatsResponse> GetParentStatsAsync(int parentId, CancellationToken cancellationToken);
 }
-
-
-
